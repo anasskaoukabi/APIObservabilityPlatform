@@ -201,9 +201,9 @@
                     StateHasChanged();
                 }), null, 0, 1000);
 
+            Refresh();
             await InitChart();
             _chartReady = true;
-            Refresh();
             StateHasChanged();
         }
     }

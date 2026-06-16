@@ -100,10 +100,30 @@
             const chart = window.observabilityCharts[canvasId];
             if (!chart) return;
             chart.data.labels = labels;
-            chart.data.datasets.forEach((ds, i) => {
-                if (datasets[i]) ds.data = datasets[i].data;
-            });
-            chart.update('active');
+
+            const colors = ['#00d4ff', '#00e887', '#b47aff'];
+            
+            if (chart.data.datasets && chart.data.datasets.length === datasets.length) {
+                chart.data.datasets.forEach((ds, i) => {
+                    if (datasets[i]) {
+                        ds.data = datasets[i].data;
+                        ds.label = datasets[i].label;
+                    }
+                });
+            } else {
+                chart.data.datasets = datasets.map((d, i) => ({
+                    label: d.label,
+                    data: d.data,
+                    borderColor: colors[i % colors.length],
+                    backgroundColor: colors[i % colors.length] + '18',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    tension: 0.4,
+                    fill: true,
+                }));
+            }
+            chart.update();
         };
 
         window.getCurrentTime = () => new Date().toLocaleTimeString('fr-FR');
