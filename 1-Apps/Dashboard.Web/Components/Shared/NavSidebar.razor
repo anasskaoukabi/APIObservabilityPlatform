@@ -12,8 +12,11 @@
 
     <div class="sidebar-section">
         <div class="sidebar-section-label">Navigation</div>
-        <a class="nav-item @(ActivePage == "dashboard" ? "active" : "")" href="/">
-            <span class="icon">⬛</span> Dashboard
+        <a class="nav-item @(ActivePage == "healthstatus" ? "active" : "")" href="/">
+            <span class="icon">❤️</span> Statut de Santé
+        </a>
+        <a class="nav-item @(ActivePage == "dashboard" ? "active" : "")" href="/realtime">
+            <span class="icon">⬛</span> Métriques TR
         </a>
         <a class="nav-item @(ActivePage == "logs" ? "active" : "")" href="/logs">
             <span class="icon">📋</span> Logs

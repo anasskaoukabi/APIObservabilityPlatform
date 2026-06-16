@@ -1,0 +1,338 @@
+@page "/"
+@rendermode InteractiveServer
+@using Observability.Contracts.Entities
+@using Observability.Contracts.Data
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<MonitoringDbContext> DbContextFactory
+@implements IDisposable
+
+<PageTitle>Statut de Santé — API Observability</PageTitle>
+
+<div class="shell">
+    <NavSidebar ActivePage="healthstatus" UnackAlerts="0" />
+
+    <main class="main-content">
+        <div class="topbar">
+            <div class="topbar-title">Statut de Santé <span>API CRUD</span></div>
+            <div class="topbar-right">
+                <div class="topbar-time">@_currentTime</div>
+                <div class="refresh-badge">Live · SQLite</div>
+            </div>
+        </div>
+
+        <div class="page-body">
+            <!-- TOP STATS CARDS -->
+            <div class="kpi-grid">
+                <!-- Status Badge Card -->
+                <div class="kpi-card @(_isApiOnline ? "green" : "red")">
+                    <div class="kpi-label">Statut Actuel</div>
+                    <div class="kpi-value">@(_isApiOnline ? "EN LIGNE" : "HORS SERVICE")</div>
+                    <div class="kpi-sub">
+                        <span class="dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background-color:currentColor; margin-right:6px; animation:pulse-dot 1.5s infinite;"></span>
+                        Cible : Product API
+                    </div>
+                    <div class="kpi-icon">📡</div>
+                </div>
+
+                <!-- Latest Latency Card -->
+                <div class="kpi-card blue">
+                    <div class="kpi-label">Dernière Latence</div>
+                    <div class="kpi-value">
+                        @(_latestLatency.HasValue ? $"{_latestLatency.Value:F0}" : "—")
+                        <span style="font-size:16px;font-weight:500"> ms</span>
+                    </div>
+                    <div class="kpi-sub">SLA max: 1500 ms</div>
+                    <div class="kpi-icon">⚡</div>
+                </div>
+
+                <!-- Success Rate Card -->
+                <div class="kpi-card purple">
+                    <div class="kpi-label">Taux de Disponibilité</div>
+                    <div class="kpi-value">@_successRate<span style="font-size:16px;font-weight:500">%</span></div>
+                    <div class="kpi-sub">Sur les 10 derniers checks</div>
+                    <div class="kpi-icon">✅</div>
+                </div>
+            </div>
+
+            <!-- LATENCY PROGRESS BAR & SPARKLINE TREND -->
+            <div class="section-header">
+                <div class="section-title">Mesure & Tendance de la Latence</div>
+            </div>
+
+            <div class="chart-panel" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; flex-wrap: wrap;">
+                <!-- Latency Gauge Progress Bar -->
+                <div style="display:flex; flex-direction:column; justify-content:center;">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; color:var(--text-secondary)">
+                        <span>Temps de réponse du dernier check :</span>
+                        <strong style="color:@GetLatencyColor(_latestLatency)">
+                            @(_latestLatency.HasValue ? $"{_latestLatency.Value:F1} ms" : "Pas de données")
+                        </strong>
+                    </div>
+                    <div class="progress-bar-track" style="height:12px; background:rgba(255,255,255,0.06); border-radius:6px; overflow:hidden;">
+                        <div class="progress-bar-fill @GetLatencyClass(_latestLatency)" style="width:@(FormatDouble(GetLatencyPercent(_latestLatency)))%; height:100%; transition:width 0.5s ease-out;"></div>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:10px; color:var(--text-muted)">
+                        <span>0 ms</span>
+                        <span>1500 ms (Warning)</span>
+                        <span>4000 ms (Critical)</span>
+                    </div>
+                </div>
+
+                <!-- Sparkline Trend Chart -->
+                <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:8px; padding:16px; display:flex; flex-direction:column; justify-content:center;">
+                    <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">Tendance des 10 dernières latences :</div>
+                    <div style="height:60px; width:100%;">
+                        @if (_recentLogs.Any())
+                        {
+                            <svg viewBox="0 0 100 30" preserveAspectRatio="none" style="width:100%; height:100%; overflow:visible;">
+                                <defs>
+                                    <linearGradient id="sparklineGrad" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.4" />
+                                        <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.0" />
+                                    </linearGradient>
+                                </defs>
+                                <!-- Fill Area -->
+                                <path d="@GetSparklineAreaPath()" fill="url(#sparklineGrad)" />
+                                <!-- Line -->
+                                <path d="@GetSparklineLinePath()" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                                <!-- Points -->
+                                @foreach (var pt in GetSparklinePoints())
+                                {
+                                    <circle cx="@FormatDouble(pt.X)" cy="@FormatDouble(pt.Y)" r="1.5" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="0.5" />
+                                }
+                            </svg>
+                        }
+                        else
+                        {
+                            <div style="text-align:center; color:var(--text-muted); font-size:12px; line-height:60px;">En attente de données...</div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <!-- TABLE OF RECENT CHECKS & CSV EXPORT -->
+            <div class="section-header" style="margin-top: 28px;">
+                <div class="section-title">Historique des 10 dernières vérifications (SQLite)</div>
+                <div>
+                    <a href="/api/export-logs" target="_blank" class="btn-primary-sm" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                        Exporter Historique en CSV 📥
+                    </a>
+                </div>
+            </div>
+
+            <div class="logs-panel">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Horodatage (Heure locale)</th>
+                            <th>Code Statut</th>
+                            <th>Latence</th>
+                            <th>État</th>
+                            <th>Détails Erreur</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!_recentLogs.Any())
+                        {
+                            <tr>
+                                <td colspan="5" style="text-align:center; padding:24px; color:var(--text-muted)">
+                                    Aucune vérification enregistrée dans SQLite pour le moment.
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            @foreach (var log in _recentLogs)
+                            {
+                                <tr>
+                                    <td class="td-mono">@log.Timestamp.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss")</td>
+                                    <td>
+                                        @if (log.StatusCode.HasValue)
+                                        {
+                                            <span class="http-badge s@(log.StatusCode.Value)">@log.StatusCode.Value</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="http-badge s500" style="background:rgba(255,77,109,0.08); color:var(--red);">ERR</span>
+                                        }
+                                    </td>
+                                    <td class="td-mono">
+                                        <span class="latency-value @GetLatencyClass(log.ResponseTimeMs)">@log.ResponseTimeMs.ToString("F1") ms</span>
+                                    </td>
+                                    <td>
+                                        @if (log.IsSuccess)
+                                        {
+                                            <span style="color:var(--green); font-weight:600;">● SUCCESS</span>
+                                        }
+                                        else
+                                        {
+                                            <span style="color:var(--red); font-weight:600;">● CRITICAL</span>
+                                        }
+                                    </td>
+                                    <td style="color:var(--text-muted); font-size:12px; max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@log.ErrorMessage">
+                                        @(log.ErrorMessage ?? "—")
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+        </div><!-- /page-body -->
+    </main>
+</div>
+
+@code {
+    private List<HealthCheckLog> _recentLogs = [];
+    private bool _isApiOnline = false;
+    private double? _latestLatency = null;
+    private double _successRate = 0;
+    private string _currentTime = DateTime.Now.ToString("HH:mm:ss");
+    private System.Threading.Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+
+        // Rafraîchissement automatique toutes les 3 secondes pour rester synchronisé avec le worker de 10s
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                _currentTime = DateTime.Now.ToString("HH:mm:ss");
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }, null, 3000, 3000);
+    }
+
+    private async Task LoadDataAsync()
+    {
+        try
+        {
+            using var db = await DbContextFactory.CreateDbContextAsync();
+            
+            // Récupérer les 10 dernières entrées chronologiques
+            _recentLogs = await db.HealthCheckLogs
+                .OrderByDescending(l => l.Timestamp)
+                .Take(10)
+                .ToListAsync();
+
+            if (_recentLogs.Any())
+            {
+                var latest = _recentLogs.First();
+                _isApiOnline = latest.IsSuccess;
+                _latestLatency = latest.IsSuccess ? latest.ResponseTimeMs : null;
+
+                int successCount = _recentLogs.Count(l => l.IsSuccess);
+                _successRate = Math.Round((double)successCount / _recentLogs.Count * 100, 1);
+            }
+            else
+            {
+                _isApiOnline = false;
+                _latestLatency = null;
+                _successRate = 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[HealthStatus] Error loading SQLite metrics: {ex.Message}");
+        }
+    }
+
+    // Helper styles
+    private string FormatDouble(double val) => val.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string GetLatencyColor(double? latency)
+    {
+        if (!latency.HasValue) return "var(--red)";
+        if (latency.Value < 1500) return "var(--green)";
+        if (latency.Value < 4000) return "var(--yellow)";
+        return "var(--red)";
+    }
+
+    private string GetLatencyClass(double? latency)
+    {
+        if (!latency.HasValue) return "red";
+        if (latency.Value < 1500) return "green";
+        if (latency.Value < 4000) return "yellow";
+        return "red";
+    }
+
+    private double GetLatencyPercent(double? latency)
+    {
+        if (!latency.HasValue) return 0;
+        // Jauge de latence par rapport au seuil WARNING de 1500 ms (cappé à 1500 pour 100%)
+        double val = latency.Value;
+        if (val > 1500) val = 1500;
+        return (val / 1500.0) * 100;
+    }
+
+    // SVG Sparkline path generation
+    private string GetSparklineLinePath()
+    {
+        if (!_recentLogs.Any()) return "";
+        var points = GetSparklinePoints();
+        if (points.Count == 0) return "";
+
+        var path = $"M {FormatDouble(points[0].X)} {FormatDouble(points[0].Y)}";
+        for (int i = 1; i < points.Count; i++)
+        {
+            path += $" L {FormatDouble(points[i].X)} {FormatDouble(points[i].Y)}";
+        }
+        return path;
+    }
+
+    private string GetSparklineAreaPath()
+    {
+        if (!_recentLogs.Any()) return "";
+        var points = GetSparklinePoints();
+        if (points.Count == 0) return "";
+
+        var path = $"M {FormatDouble(points[0].X)} 30.00"; // Démarre en bas à gauche
+        foreach (var pt in points)
+        {
+            path += $" L {FormatDouble(pt.X)} {FormatDouble(pt.Y)}";
+        }
+        path += $" L {FormatDouble(points[^1].X)} 30.00 Z"; // Ferme le tracé en bas à droite
+        return path;
+    }
+
+    private List<(double X, double Y)> GetSparklinePoints()
+    {
+        var result = new List<(double X, double Y)>();
+        if (!_recentLogs.Any()) return result;
+
+        // On prend dans l'ordre chronologique (du plus ancien au plus récent)
+        var orderedLogs = _recentLogs.AsEnumerable().Reverse().ToList();
+        
+        // Échelle de latence dynamique avec un minimum de 50ms pour voir de légères variations sous les 10ms
+        double maxLatency = orderedLogs.Max(l => l.IsSuccess ? l.ResponseTimeMs : 0);
+        if (maxLatency < 50) maxLatency = 50;
+
+        double stepX = 100.0 / (orderedLogs.Count > 1 ? orderedLogs.Count - 1 : 1);
+
+        for (int i = 0; i < orderedLogs.Count; i++)
+        {
+            var log = orderedLogs[i];
+            double x = i * stepX;
+            double latency = log.IsSuccess ? log.ResponseTimeMs : maxLatency;
+            
+            // Calcul du Y (0 en haut de l'écran, 30 en bas)
+            // On laisse 3px de marge en haut/bas
+            double y = 27 - ((latency / maxLatency) * 24);
+            if (y < 3) y = 3;
+            if (y > 27) y = 27;
+
+            result.Add((x, y));
+        }
+
+        return result;
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+}
