@@ -1,0 +1,292 @@
+@page "/"
+@rendermode InteractiveServer
+@using Dashboard.Web.Models
+@using Dashboard.Web.Services
+@inject MetricsStore Metrics
+@inject AlertsStore Alerts
+@inject EndpointConfigStore EndpointStore
+@inject IJSRuntime JS
+@implements IDisposable
+
+<PageTitle>Dashboard — API Observability Platform</PageTitle>
+
+<div class="shell">
+    <NavSidebar ActivePage="dashboard" UnackAlerts="@_unackAlerts" />
+
+    <main class="main-content">
+        <div class="topbar">
+            <div class="topbar-title">Dashboard <span>Temps Réel</span></div>
+            <div class="topbar-right">
+                <div class="topbar-time">@_currentTime</div>
+                <div class="refresh-badge">Live · @_tickCount tick</div>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- KPI CARDS -->
+            <div class="kpi-grid">
+                <div class="kpi-card blue">
+                    <div class="kpi-label">Latence Moyenne</div>
+                    <div class="kpi-value">@_avgLatency<span style="font-size:16px;font-weight:500"> ms</span></div>
+                    <div class="kpi-sub">↗ Tous endpoints actifs</div>
+                    <div class="kpi-icon">⚡</div>
+                </div>
+                <div class="kpi-card @(_successRate >= 95 ? "green" : _successRate >= 80 ? "yellow" : "red")">
+                    <div class="kpi-label">Taux de Succès</div>
+                    <div class="kpi-value">@_successRate<span style="font-size:16px;font-weight:500">%</span></div>
+                    <div class="kpi-sub">Mesures réelles HTTP</div>
+                    <div class="kpi-icon">✅</div>
+                </div>
+                <div class="kpi-card red">
+                    <div class="kpi-label">Erreurs Totales</div>
+                    <div class="kpi-value">@_totalErrors</div>
+                    <div class="kpi-sub">Depuis le démarrage</div>
+                    <div class="kpi-icon">🚨</div>
+                </div>
+                <div class="kpi-card purple">
+                    <div class="kpi-label">Mesures Collectées</div>
+                    <div class="kpi-value">@_totalMeasures</div>
+                    <div class="kpi-sub">@_activeEndpoints endpoints actifs</div>
+                    <div class="kpi-icon">📊</div>
+                </div>
+            </div>
+
+            <!-- ENDPOINT CARDS -->
+            <div class="section-header">
+                <div class="section-title">État des Endpoints</div>
+                <a href="/endpoints" class="btn-link">Gérer →</a>
+            </div>
+
+            @if (!_summaries.Any())
+            {
+                <div class="empty-state">
+                    <div class="empty-icon">📡</div>
+                    <div>Collecte des métriques en cours...</div>
+                    <div class="empty-sub">Les données apparaîtront après le premier cycle de polling.</div>
+                </div>
+            }
+            else
+            {
+                <div class="endpoints-grid">
+                    @foreach (var s in _summaries)
+                    {
+                        var latCls = s.LatestLatencyMs > 1000 ? "latency-high"
+                                   : s.LatestLatencyMs > 400  ? "latency-medium" : "latency-low";
+                        var barCls = s.SuccessRatePercent < 80 ? "red"
+                                   : s.SuccessRatePercent < 95 ? "yellow" : "green";
+                        <div class="endpoint-card">
+                            <div class="endpoint-header">
+                                <div>
+                                    <div class="endpoint-name">@s.EndpointName</div>
+                                    <div class="endpoint-url" title="@s.Url">@s.Url</div>
+                                </div>
+                                <div class="status-badge @s.HealthStatus">
+                                    <span class="dot"></span>
+                                    @s.HealthLabel
+                                </div>
+                            </div>
+                            <div class="endpoint-metrics">
+                                <div class="mini-metric">
+                                    <div class="mini-label">Latence</div>
+                                    <div class="mini-value @latCls">@s.LatestLatencyMs<span style="font-size:11px"> ms</span></div>
+                                </div>
+                                <div class="mini-metric">
+                                    <div class="mini-label">Moy. (@s.TotalChecks)</div>
+                                    <div class="mini-value" style="color:var(--text-secondary)">@s.AverageLatencyMs<span style="font-size:11px"> ms</span></div>
+                                </div>
+                                <div class="mini-metric">
+                                    <div class="mini-label">HTTP</div>
+                                    <div class="mini-value" style="color:@(s.IsLastSuccess ? "var(--green)" : "var(--red)")">
+                                        @(s.LastHttpStatus?.ToString() ?? "ERR")
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="progress-bar-wrapper">
+                                <div class="progress-bar-label">
+                                    <span>Succès</span><span>@s.SuccessRatePercent%</span>
+                                </div>
+                                <div class="progress-bar-track">
+                                    <div class="progress-bar-fill @barCls" style="width:@(s.SuccessRatePercent)%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- CHART -->
+            <div class="section-header">
+                <div class="section-title">Latence en Temps Réel</div>
+            </div>
+            <div class="chart-panel">
+                <div class="chart-wrapper">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+
+            <!-- LIVE LOGS (last 10) -->
+            <div class="section-header">
+                <div class="section-title">Flux de Métriques</div>
+                <a href="/logs" class="btn-link">Voir tous →</a>
+            </div>
+            <div class="logs-panel">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Endpoint</th>
+                            <th>HTTP</th>
+                            <th>Latence</th>
+                            <th>Taille</th>
+                            <th>Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in _recent)
+                        {
+                            <tr>
+                                <td class="td-mono">@r.Timestamp.LocalDateTime.ToString("HH:mm:ss.fff")</td>
+                                <td>@r.EndpointName</td>
+                                <td><span class="http-badge s@(r.HttpStatusCode ?? 0)">@(r.HttpStatusCode?.ToString() ?? "ERR")</span></td>
+                                <td><span class="latency-value @r.LatencyCategory">@r.LatencyMs.ToString("F0") ms</span></td>
+                                <td class="td-mono" style="color:var(--text-muted)">
+                                    @(r.ResponseSizeBytes > 0 ? FormatBytes(r.ResponseSizeBytes) : "—")
+                                </td>
+                                <td>
+                                    @if (r.IsSuccess)
+                                    { <span style="color:var(--green);font-size:12px">● Success</span> }
+                                    else
+                                    { <span style="color:var(--red);font-size:12px" title="@r.ErrorMessage">● Error</span> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+        </div><!-- /page-body -->
+    </main>
+</div>
+
+@code {
+    private List<EndpointSummary> _summaries = [];
+    private List<MetricRecord>    _recent    = [];
+    private string _currentTime = DateTime.Now.ToString("HH:mm:ss");
+    private string _avgLatency  = "—";
+    private double _successRate;
+    private int    _totalErrors;
+    private int    _totalMeasures;
+    private int    _activeEndpoints;
+    private int    _unackAlerts;
+    private int    _tickCount;
+    private bool   _chartReady;
+
+    private System.Threading.Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        Metrics.DataChanged    += OnDataChanged;
+        Alerts.AlertTriggered  += OnAlertChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _timer = new System.Threading.Timer(_ =>
+                InvokeAsync(async () =>
+                {
+                    _currentTime = DateTime.Now.ToString("HH:mm:ss");
+                    StateHasChanged();
+                }), null, 0, 1000);
+
+            await InitChart();
+            _chartReady = true;
+            Refresh();
+            StateHasChanged();
+        }
+    }
+
+    private async void OnDataChanged()
+    {
+        try
+        {
+            Refresh();
+            await InvokeAsync(StateHasChanged);
+            if (_chartReady) await UpdateChart();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Home] Error on OnDataChanged: {ex.Message}");
+        }
+    }
+
+    private async void OnAlertChanged()
+    {
+        try
+        {
+            _unackAlerts = Alerts.UnacknowledgedCount();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Home] Error on OnAlertChanged: {ex.Message}");
+        }
+    }
+
+    private void Refresh()
+    {
+        _tickCount++;
+        _summaries  = Metrics.GetSummaries();
+        _recent     = Metrics.GetRecent(10);
+        _unackAlerts = Alerts.UnacknowledgedCount();
+        _totalMeasures  = Metrics.TotalRecords();
+        _activeEndpoints = EndpointStore.GetAll().Count(e => e.IsEnabled);
+
+        if (_summaries.Any())
+        {
+            _avgLatency  = Math.Round(_summaries.Average(s => s.AverageLatencyMs), 0).ToString();
+            _successRate = Math.Round(_summaries.Average(s => s.SuccessRatePercent), 1);
+            _totalErrors = _summaries.Sum(s => s.FailedChecks);
+        }
+    }
+
+    private async Task InitChart()
+    {
+        try
+        {
+            var labels   = Enumerable.Range(1, 30).Select(i => i.ToString()).ToArray();
+            var datasets = _summaries.Select(s => new { label = s.EndpointName, data = s.LatencyHistory }).ToArray();
+            await JS.InvokeVoidAsync("initLatencyChart", "latencyChart", labels, datasets);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Home] Error on InitChart: {ex.Message}");
+        }
+    }
+
+    private async Task UpdateChart()
+    {
+        try
+        {
+            var labels   = Enumerable.Range(1, 30).Select(i => i.ToString()).ToArray();
+            var datasets = _summaries.Select(s => new { label = s.EndpointName, data = s.LatencyHistory }).ToArray();
+            await JS.InvokeVoidAsync("updateLatencyChart", "latencyChart", labels, datasets);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Home] Error on UpdateChart: {ex.Message}");
+        }
+    }
+
+    private static string FormatBytes(long bytes) =>
+        bytes >= 1024 ? $"{bytes / 1024.0:F1} KB" : $"{bytes} B";
+
+    public void Dispose()
+    {
+        Metrics.DataChanged   -= OnDataChanged;
+        Alerts.AlertTriggered -= OnAlertChanged;
+        _timer?.Dispose();
+    }
+}

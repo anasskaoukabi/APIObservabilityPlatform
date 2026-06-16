@@ -1,0 +1,204 @@
+@page "/logs"
+@rendermode InteractiveServer
+@using Dashboard.Web.Models
+@using Dashboard.Web.Services
+@inject MetricsStore Metrics
+@inject AlertsStore Alerts
+@inject EndpointConfigStore EndpointStore
+@implements IDisposable
+
+<PageTitle>Logs — API Observability Platform</PageTitle>
+
+<div class="shell">
+    <NavSidebar ActivePage="logs" UnackAlerts="@Alerts.UnacknowledgedCount()" />
+
+    <main class="main-content">
+        <div class="topbar">
+            <div class="topbar-title">Logs <span>de Métriques</span></div>
+            <div class="topbar-right">
+                <div class="refresh-badge">@_records.Count enregistrements</div>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- FILTER BAR -->
+            <div class="filter-bar">
+                <div class="filter-group">
+                    <label class="filter-label">Endpoint</label>
+                    <select class="filter-select" @onchange="OnEndpointFilter">
+                        <option value="">Tous</option>
+                        @foreach (var ep in _endpoints)
+                        {
+                            <option value="@ep.Id">@ep.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Statut</label>
+                    <select class="filter-select" @onchange="OnStatusFilter">
+                        <option value="">Tous</option>
+                        <option value="success">Succès uniquement</option>
+                        <option value="error">Erreurs uniquement</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Afficher</label>
+                    <select class="filter-select" @bind="_pageSize">
+                        <option value="25">25</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                </div>
+                <button class="btn-ghost" @onclick="ClearFilters">↺ Réinitialiser</button>
+            </div>
+
+            <!-- STATS BANNER -->
+            <div class="stats-banner">
+                <div class="stat-item">
+                    <span class="stat-val" style="color:var(--accent)">@_records.Count</span>
+                    <span class="stat-lbl">Total filtré</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-val" style="color:var(--green)">@_records.Count(r => r.IsSuccess)</span>
+                    <span class="stat-lbl">Succès</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-val" style="color:var(--red)">@_records.Count(r => !r.IsSuccess)</span>
+                    <span class="stat-lbl">Erreurs</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-val" style="color:var(--purple)">
+                        @(_records.Any() ? Math.Round(_records.Average(r => r.LatencyMs), 0) + " ms" : "—")
+                    </span>
+                    <span class="stat-lbl">Latence moy.</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-val" style="color:var(--yellow)">
+                        @(_records.Any() ? Math.Round(_records.Max(r => r.LatencyMs), 0) + " ms" : "—")
+                    </span>
+                    <span class="stat-lbl">Latence max</span>
+                </div>
+            </div>
+
+            <!-- TABLE -->
+            <div class="logs-panel">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Endpoint</th>
+                            <th>URL</th>
+                            <th>HTTP</th>
+                            <th>Latence</th>
+                            <th>Taille</th>
+                            <th>Statut</th>
+                            <th>Erreur</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!_records.Any())
+                        {
+                            <tr>
+                                <td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted)">
+                                    Aucune métrique collectée pour le moment...
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var r in _records.Take(_pageSize))
+                        {
+                            <tr>
+                                <td class="td-mono">@r.Timestamp.LocalDateTime.ToString("HH:mm:ss.fff")</td>
+                                <td>
+                                    <span style="font-weight:600;color:var(--text-primary)">@r.EndpointName</span>
+                                </td>
+                                <td class="td-mono" style="color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                                    title="@r.Url">@r.Url</td>
+                                <td>
+                                    <span class="http-badge s@(r.HttpStatusCode ?? 0)">
+                                        @(r.HttpStatusCode?.ToString() ?? "ERR")
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="latency-value @r.LatencyCategory">
+                                        @r.LatencyMs.ToString("F1") ms
+                                    </span>
+                                </td>
+                                <td class="td-mono" style="color:var(--text-muted)">
+                                    @(r.ResponseSizeBytes > 0 ? FormatBytes(r.ResponseSizeBytes) : "—")
+                                </td>
+                                <td>
+                                    @if (r.IsSuccess)
+                                    { <span style="color:var(--green);font-size:12px;font-weight:600">✓ OK</span> }
+                                    else
+                                    { <span style="color:var(--red);font-size:12px;font-weight:600">✗ FAIL</span> }
+                                </td>
+                                <td style="color:var(--red);font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis"
+                                    title="@r.ErrorMessage">
+                                    @(r.ErrorMessage ?? "—")
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+@code {
+    private List<MetricRecord>        _records   = [];
+    private List<MonitoredEndpoint>   _endpoints = [];
+    private string? _filterEndpointId;
+    private string? _filterStatus;
+    private int     _pageSize = 50;
+
+    protected override void OnInitialized()
+    {
+        _endpoints = [.. EndpointStore.GetAll()];
+        LoadData();
+        Metrics.DataChanged += OnDataChanged;
+    }
+
+    private void LoadData()
+    {
+        bool? successOnly = _filterStatus switch
+        {
+            "success" => true,
+            "error"   => false,
+            _         => null,
+        };
+        _records = Metrics.GetFiltered(_filterEndpointId, successOnly, 200);
+    }
+
+    private async void OnDataChanged()
+    {
+        LoadData();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnEndpointFilter(ChangeEventArgs e)
+    {
+        _filterEndpointId = string.IsNullOrEmpty(e.Value?.ToString()) ? null : e.Value.ToString();
+        LoadData();
+    }
+
+    private void OnStatusFilter(ChangeEventArgs e)
+    {
+        _filterStatus = e.Value?.ToString();
+        LoadData();
+    }
+
+    private void ClearFilters()
+    {
+        _filterEndpointId = null;
+        _filterStatus     = null;
+        LoadData();
+    }
+
+    private static string FormatBytes(long b) =>
+        b >= 1024 ? $"{b / 1024.0:F1} KB" : $"{b} B";
+
+    public void Dispose() => Metrics.DataChanged -= OnDataChanged;
+}

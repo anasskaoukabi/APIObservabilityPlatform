@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Plateforme de supervision et d'observabilité dédiée au monitoring des API .NET" />
+    <base href="/" />
+    <title>API Observability Platform</title>
+
+    <!-- Design System -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="Dashboard.Web.styles.css" />
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2300d4ff'/><text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-size='18'>📡</text></svg>" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js"></script>
+
+    <!-- Chart.js helpers exposed to Blazor -->
+    <script>
+        window.observabilityCharts = {};
+
+        window.initLatencyChart = (canvasId, labels, datasets) => {
+            const ctx = document.getElementById(canvasId);
+            if (!ctx) return;
+
+            if (window.observabilityCharts[canvasId]) {
+                window.observabilityCharts[canvasId].destroy();
+            }
+
+            const colors = ['#00d4ff', '#00e887', '#b47aff'];
+            const ds = datasets.map((d, i) => ({
+                label: d.label,
+                data: d.data,
+                borderColor: colors[i % colors.length],
+                backgroundColor: colors[i % colors.length] + '18',
+                borderWidth: 2,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                tension: 0.4,
+                fill: true,
+            }));
+
+            window.observabilityCharts[canvasId] = new Chart(ctx, {
+                type: 'line',
+                data: { labels, datasets: ds },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#8892b0',
+                                font: { family: 'Inter', size: 12 },
+                                usePointStyle: true,
+                                pointStyleWidth: 8,
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: '#0d0f1c',
+                            borderColor: '#1e2235',
+                            borderWidth: 1,
+                            titleColor: '#f0f2ff',
+                            bodyColor: '#8892b0',
+                            callbacks: {
+                                label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} ms`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: '#4a5568', font: { size: 10 }, maxTicksLimit: 8 },
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                        },
+                        y: {
+                            ticks: {
+                                color: '#4a5568',
+                                font: { size: 10 },
+                                callback: v => v + ' ms'
+                            },
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            beginAtZero: true,
+                        }
+                    }
+                }
+            });
+        };
+
+        window.updateLatencyChart = (canvasId, labels, datasets) => {
+            const chart = window.observabilityCharts[canvasId];
+            if (!chart) return;
+            chart.data.labels = labels;
+            chart.data.datasets.forEach((ds, i) => {
+                if (datasets[i]) ds.data = datasets[i].data;
+            });
+            chart.update('active');
+        };
+
+        window.getCurrentTime = () => new Date().toLocaleTimeString('fr-FR');
+    </script>
+</body>
+
+</html>

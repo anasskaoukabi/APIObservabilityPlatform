@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>TargetAPI</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Documentation Swagger/OpenAPI -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="9.0.*" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+
+  <!-- Référence au projet partagé (pas de NuGet, référence directe en dev) -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\2-Shared\Observability.Contracts\Observability.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

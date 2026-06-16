@@ -1,0 +1,180 @@
+@page "/settings"
+@rendermode InteractiveServer
+@using Dashboard.Web.Models
+@using Dashboard.Web.Services
+@inject GlobalSettings AppSettings
+@inject AlertsStore Alerts
+@inject MetricsStore Metrics
+
+<PageTitle>Paramètres — API Observability Platform</PageTitle>
+
+<div class="shell">
+    <NavSidebar ActivePage="settings" UnackAlerts="@Alerts.UnacknowledgedCount()" />
+
+    <main class="main-content">
+        <div class="topbar">
+            <div class="topbar-title">Paramètres <span>de la Plateforme</span></div>
+            <div class="topbar-right">
+                @if (_saved)
+                {
+                    <div class="refresh-badge" style="background:var(--green-glow);border-color:rgba(0,232,135,.3);color:var(--green)">
+                        ✓ Paramètres sauvegardés
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- MONITORING -->
+            <div class="settings-section">
+                <div class="settings-section-title">🔄 Monitoring</div>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label class="setting-label">Intervalle de polling par défaut</label>
+                        <div class="setting-desc">Utilisé pour les nouveaux endpoints ajoutés</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.DefaultPollingIntervalSeconds" min="5" max="300" />
+                            <span class="setting-unit">secondes</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Timeout HTTP global</label>
+                        <div class="setting-desc">Délai max avant d'annuler une requête</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.HttpTimeoutSeconds" min="3" max="60" />
+                            <span class="setting-unit">secondes</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Buffer max par endpoint</label>
+                        <div class="setting-desc">Nombre de métriques conservées en mémoire</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.MaxRecordsPerEndpoint" min="50" max="1000" />
+                            <span class="setting-unit">enregistrements</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ALERT THRESHOLDS -->
+            <div class="settings-section">
+                <div class="settings-section-title">🔔 Seuils d'Alerte</div>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label class="setting-label">Latence Warning</label>
+                        <div class="setting-desc">Seuil d'avertissement pour la latence</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.LatencyWarningMs" />
+                            <span class="setting-unit">ms</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Latence Critical</label>
+                        <div class="setting-desc">Seuil critique pour la latence</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.LatencyCriticalMs" />
+                            <span class="setting-unit">ms</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Taux d'erreur Warning</label>
+                        <div class="setting-desc">Pourcentage d'erreurs déclenchant un avertissement</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.ErrorRateWarningPercent" />
+                            <span class="setting-unit">%</span>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Taux d'erreur Critical</label>
+                        <div class="setting-desc">Pourcentage d'erreurs déclenchant une alerte critique</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="number" @bind="AppSettings.ErrorRateCriticalPercent" />
+                            <span class="setting-unit">%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EMAIL ALERTS (MailKit placeholder) -->
+            <div class="settings-section">
+                <div class="settings-section-title">📧 Alertes Email (MailKit)</div>
+                <div class="info-banner">
+                    ℹ️ La notification email sera activée à l'étape <strong>MonitoringWorker</strong> (MailKit + SMTP).
+                    Configurez les paramètres dès maintenant.
+                </div>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label class="setting-label">Alertes email activées</label>
+                        <div class="setting-desc">Envoyer un email lors d'une alerte critique</div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" @bind="AppSettings.EmailAlertsEnabled" />
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Email de destination</label>
+                        <div class="setting-desc">Adresse qui recevra les alertes</div>
+                        <div class="setting-control">
+                            <input class="form-input" type="email" @bind="AppSettings.AlertEmail"
+                                   placeholder="admin@exemple.com" style="width:280px" />
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label class="setting-label">Serveur SMTP</label>
+                        <div class="setting-control">
+                            <input class="form-input" @bind="AppSettings.SmtpHost"
+                                   placeholder="smtp.gmail.com" style="width:220px" />
+                            <span class="setting-unit">Port:</span>
+                            <input class="form-input" type="number" @bind="AppSettings.SmtpPort"
+                                   style="width:80px" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STATS -->
+            <div class="settings-section">
+                <div class="settings-section-title">📊 Statistiques de la session</div>
+                <div class="stats-banner">
+                    <div class="stat-item">
+                        <span class="stat-val" style="color:var(--accent)">@Metrics.TotalRecords()</span>
+                        <span class="stat-lbl">Métriques collectées</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-val" style="color:var(--red)">@Alerts.GetEntries(200).Count</span>
+                        <span class="stat-lbl">Alertes déclenchées</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-val" style="color:var(--green)">@Alerts.GetRules().Count</span>
+                        <span class="stat-lbl">Règles actives</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-val" style="color:var(--purple)">@DateTime.Now.ToString("HH:mm:ss")</span>
+                        <span class="stat-lbl">Heure serveur</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions" style="margin-top:8px">
+                <button class="btn-primary" @onclick="Save">✓ Sauvegarder les paramètres</button>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+@code {
+    private bool _saved;
+
+    private async Task Save()
+    {
+        _saved = true;
+        StateHasChanged();
+        await Task.Delay(2500);
+        _saved = false;
+        StateHasChanged();
+    }
+}

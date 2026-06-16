@@ -1,0 +1,240 @@
+@page "/alerts"
+@rendermode InteractiveServer
+@using Dashboard.Web.Models
+@using Dashboard.Web.Services
+@inject AlertsStore AlertsSvc
+@inject EndpointConfigStore EndpointStore
+@implements IDisposable
+
+<PageTitle>Alertes — API Observability Platform</PageTitle>
+
+<div class="shell">
+    <NavSidebar ActivePage="alerts" UnackAlerts="@AlertsSvc.UnacknowledgedCount()" />
+
+    <main class="main-content">
+        <div class="topbar">
+            <div class="topbar-title">Alertes <span>& Règles</span></div>
+            <div class="topbar-right">
+                @if (AlertsSvc.UnacknowledgedCount() > 0)
+                {
+                    <button class="btn-ghost" @onclick="AckAll">✓ Tout acquitter</button>
+                }
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- ALERT ENTRIES -->
+            <div class="section-header">
+                <div class="section-title">Alertes Déclenchées</div>
+                <span style="font-size:12px;color:var(--text-muted)">@AlertsSvc.UnacknowledgedCount() non acquittées</span>
+            </div>
+
+            @if (!_entries.Any())
+            {
+                <div class="empty-state" style="margin-bottom:28px">
+                    <div class="empty-icon" style="color:var(--green)">✅</div>
+                    <div>Aucune alerte déclenchée</div>
+                    <div class="empty-sub">Tous les endpoints sont dans les seuils configurés.</div>
+                </div>
+            }
+            else
+            {
+                <div class="logs-panel" style="margin-bottom:28px">
+                    <table class="logs-table">
+                        <thead>
+                            <tr>
+                                <th>Heure</th>
+                                <th>Sévérité</th>
+                                <th>Endpoint</th>
+                                <th>Règle</th>
+                                <th>Valeur</th>
+                                <th>Seuil</th>
+                                <th>Message</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var e in _entries)
+                            {
+                                <tr style="@(e.IsAcknowledged ? "opacity:0.45" : "")">
+                                    <td class="td-mono">@e.TriggeredAt.LocalDateTime.ToString("HH:mm:ss")</td>
+                                    <td>
+                                        <span class="severity-badge @(e.Severity == AlertSeverityLevel.Critical ? "critical" : "warning")">
+                                            @(e.Severity == AlertSeverityLevel.Critical ? "🔴 Critical" : "🟡 Warning")
+                                        </span>
+                                    </td>
+                                    <td style="font-weight:600">@e.EndpointName</td>
+                                    <td>@e.RuleName</td>
+                                    <td class="td-mono" style="color:var(--red)">@e.MeasuredValue.ToString("F1")</td>
+                                    <td class="td-mono" style="color:var(--text-muted)">@e.ThresholdValue.ToString("F0")</td>
+                                    <td style="font-size:12px;color:var(--text-secondary)">@e.Message</td>
+                                    <td>
+                                        @if (!e.IsAcknowledged)
+                                        {
+                                            <button class="btn-ghost-sm" @onclick="() => Acknowledge(e.Id)">✓ Ack</button>
+                                        }
+                                        else
+                                        {
+                                            <span style="color:var(--green);font-size:11px">✓ Acquittée</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            <!-- RULES -->
+            <div class="section-header">
+                <div class="section-title">Règles d'Alerte</div>
+                <button class="btn-primary-sm" @onclick="() => _showRuleForm = true">+ Nouvelle règle</button>
+            </div>
+
+            <!-- Add Rule Form -->
+            @if (_showRuleForm)
+            {
+                <div class="form-card" style="margin-bottom:20px">
+                    <div class="form-card-title">Nouvelle règle d'alerte</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Nom</label>
+                            <input class="form-input" @bind="_newRule.Name" placeholder="Ex: Latence critique auth" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Endpoint (vide = tous)</label>
+                            <select class="form-input" @bind="_newRule.EndpointId">
+                                <option value="">Tous les endpoints</option>
+                                @foreach (var ep in _allEndpoints)
+                                {
+                                    <option value="@ep.Id">@ep.Name</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Métrique</label>
+                            <select class="form-input" @bind="_newRule.Metric">
+                                <option value="@AlertMetric.LatencyMs">Latence (ms)</option>
+                                <option value="@AlertMetric.ErrorRatePercent">Taux d'erreur (%)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Seuil</label>
+                            <input class="form-input" type="number" @bind="_newRule.Threshold" placeholder="Ex: 1000" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Sévérité</label>
+                            <select class="form-input" @bind="_newRule.Severity">
+                                <option value="@AlertSeverityLevel.Warning">Warning</option>
+                                <option value="@AlertSeverityLevel.Critical">Critical</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Cooldown (min)</label>
+                            <input class="form-input" type="number" @bind="_newRule.CooldownMinutes" />
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn-primary" @onclick="AddRule">✓ Créer la règle</button>
+                        <button class="btn-ghost" @onclick="() => _showRuleForm = false">Annuler</button>
+                    </div>
+                </div>
+            }
+
+            <div class="logs-panel">
+                <table class="logs-table">
+                    <thead>
+                        <tr>
+                            <th>Nom</th>
+                            <th>Endpoint</th>
+                            <th>Métrique</th>
+                            <th>Seuil</th>
+                            <th>Sévérité</th>
+                            <th>Cooldown</th>
+                            <th>Dernière alerte</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var rule in _rules)
+                        {
+                            <tr style="@(!rule.IsEnabled ? "opacity:0.45" : "")">
+                                <td style="font-weight:600;color:var(--text-primary)">@rule.Name</td>
+                                <td style="color:var(--text-muted)">@(rule.EndpointId is null ? "Tous" : rule.EndpointId)</td>
+                                <td>
+                                    <span class="metric-tag">@rule.Metric</span>
+                                </td>
+                                <td class="td-mono">@rule.Threshold</td>
+                                <td>
+                                    <span class="severity-badge @(rule.Severity == AlertSeverityLevel.Critical ? "critical" : "warning")">
+                                        @rule.Severity
+                                    </span>
+                                </td>
+                                <td style="color:var(--text-muted)">@rule.CooldownMinutes min</td>
+                                <td class="td-mono" style="color:var(--text-muted)">
+                                    @(rule.LastTriggered?.LocalDateTime.ToString("HH:mm:ss") ?? "Jamais")
+                                </td>
+                                <td>
+                                    <div style="display:flex;gap:6px">
+                                        <button class="btn-ghost-sm" @onclick="() => ToggleRule(rule.Id)">
+                                            @(rule.IsEnabled ? "⏸ Pause" : "▶ Activer")
+                                        </button>
+                                        <button class="btn-danger-sm" @onclick="() => DeleteRule(rule.Id)">🗑</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+@code {
+    private List<AlertEntry>          _entries    = [];
+    private List<AlertRule>           _rules      = [];
+    private List<MonitoredEndpoint>   _allEndpoints = [];
+    private bool   _showRuleForm;
+    private AlertRule _newRule = new();
+
+    protected override void OnInitialized()
+    {
+        _allEndpoints = [.. EndpointStore.GetAll()];
+        Refresh();
+        AlertsSvc.AlertTriggered += OnAlertChanged;
+    }
+
+    private void Refresh()
+    {
+        _entries = AlertsSvc.GetEntries(50);
+        _rules   = [.. AlertsSvc.GetRules()];
+    }
+
+    private async void OnAlertChanged()
+    {
+        Refresh();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Acknowledge(string id) { AlertsSvc.Acknowledge(id); Refresh(); }
+    private void AckAll() { AlertsSvc.AcknowledgeAll(); Refresh(); }
+    private void ToggleRule(string id) { AlertsSvc.ToggleRule(id); Refresh(); }
+    private void DeleteRule(string id) { AlertsSvc.DeleteRule(id); Refresh(); }
+
+    private void AddRule()
+    {
+        if (string.IsNullOrWhiteSpace(_newRule.Name)) return;
+        _newRule.EndpointId = string.IsNullOrEmpty(_newRule.EndpointId) ? null : _newRule.EndpointId;
+        AlertsSvc.AddRule(_newRule);
+        _newRule       = new AlertRule();
+        _showRuleForm  = false;
+        Refresh();
+    }
+
+    public void Dispose() => AlertsSvc.AlertTriggered -= OnAlertChanged;
+}

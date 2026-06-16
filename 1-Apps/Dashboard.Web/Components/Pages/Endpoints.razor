@@ -1,0 +1,379 @@
+@page "/endpoints"
+@rendermode InteractiveServer
+@using Dashboard.Web.Models
+@using Dashboard.Web.Services
+@inject EndpointConfigStore EndpointStore
+@inject MetricsStore Metrics
+@inject AlertsStore Alerts
+@inject IHttpClientFactory HttpFactory
+@inject GlobalSettings AppSettings
+@implements IDisposable
+
+<PageTitle>Endpoints — API Observability Platform</PageTitle>
+
+<div class="shell">
+    <NavSidebar ActivePage="endpoints" UnackAlerts="@Alerts.UnacknowledgedCount()" />
+
+    <main class="main-content">
+        <div class="topbar">
+            <div class="topbar-title">Endpoints <span>Surveillés</span></div>
+            <div class="topbar-right">
+                <div class="refresh-badge">@_endpoints.Count endpoints configurés</div>
+                <button class="btn-primary-sm" @onclick="() => _showForm = !_showForm">
+                    @(_showForm ? "✕ Fermer" : "+ Ajouter un endpoint")
+                </button>
+            </div>
+        </div>
+
+        <div class="page-body">
+
+            <!-- ADD FORM -->
+            @if (_showForm)
+            {
+                <div class="form-card" style="margin-bottom:28px">
+                    <div class="form-card-title">Ajouter un endpoint à surveiller</div>
+                    <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
+                        Supporte tout endpoint HTTP/HTTPS — REST, SOAP/WSDL, GraphQL, etc.
+                    </p>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:1.5">
+                            <label class="form-label">Nom affiché *</label>
+                            <input class="form-input" @bind="_form.Name" placeholder="Ex: Mon API de paiement" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Type</label>
+                            <select class="form-input" @bind="_form.Type">
+                                <option value="@EndpointType.Rest">REST / HTTP</option>
+                                <option value="@EndpointType.SoapWsdl">SOAP / WSDL</option>
+                                <option value="@EndpointType.GraphQL">GraphQL</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:3">
+                            <label class="form-label">URL *</label>
+                            <input class="form-input" @bind="_form.Url"
+                                   placeholder="https://api.exemple.com/health  ou  http://service.com?wsdl" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Polling (secondes)</label>
+                            <input class="form-input" type="number" @bind="_form.PollingIntervalSeconds" min="5" max="300" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Timeout (secondes)</label>
+                            <input class="form-input" type="number" @bind="_form.TimeoutSeconds" min="3" max="60" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2">
+                            <label class="form-label">Contenu attendu (optionnel)</label>
+                            <input class="form-input" @bind="_form.ExpectedContentContains"
+                                   placeholder='Ex: "status":"ok"  — vérifie que la réponse contient ce texte' />
+                        </div>
+                    </div>
+                    @if (_formError is not null)
+                    {
+                        <div class="form-error">⚠ @_formError</div>
+                    }
+                    <div class="form-actions">
+                        <button class="btn-primary" @onclick="AddEndpoint">✓ Ajouter et surveiller</button>
+                        <button class="btn-ghost" @onclick="TestUrl" disabled="@_testing">
+                            @(_testing ? "Test en cours..." : "⚡ Tester l'URL maintenant")
+                        </button>
+                        @if (_testResult is not null)
+                        {
+                            <span class="@(_testResult.StartsWith("✅") ? "text-green" : "text-red")">
+                                @_testResult
+                            </span>
+                        }
+                    </div>
+                </div>
+            }
+
+            <!-- QUICK LINKS — WSDL publics pour tester -->
+            <div class="section-header">
+                <div class="section-title">Liens WSDL / APIs publiques de test</div>
+            </div>
+            <div class="quick-links-grid" style="margin-bottom:28px">
+                @foreach (var link in _quickLinks)
+                {
+                    <div class="quick-link-card">
+                        <div class="quick-link-type">@link.TypeStr</div>
+                        <div class="quick-link-name">@link.Name</div>
+                        <div class="quick-link-url" title="@link.Url">@link.Url</div>
+                        <div class="quick-link-actions">
+                            <a href="@link.Url" target="_blank" class="btn-ghost-sm">↗ Ouvrir</a>
+                            <button class="btn-ghost-sm" @onclick="() => PrefillForm(link)">
+                                + Surveiller
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- ENDPOINTS LIST -->
+            <div class="section-header">
+                <div class="section-title">Endpoints configurés</div>
+            </div>
+
+            <div class="endpoints-list">
+                @foreach (var ep in _endpoints)
+                {
+                    var summary = _summaries.FirstOrDefault(s => s.EndpointId == ep.Id);
+                    <div class="ep-list-card @(!ep.IsEnabled ? "ep-disabled" : "")">
+                        <div class="ep-list-left">
+                            <div class="ep-list-header">
+                                <span class="ep-type-badge @ep.Type.ToString().ToLower()">@ep.Type</span>
+                                @if (ep.IsWsdl)
+                                { <span class="ep-type-badge wsdl">WSDL</span> }
+                                <span class="ep-list-name">@ep.Name</span>
+                                @if (summary is not null)
+                                {
+                                    <span class="status-badge @summary.HealthStatus" style="font-size:11px;padding:2px 8px">
+                                        <span class="dot"></span> @summary.HealthLabel
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="status-badge" style="font-size:11px;padding:2px 8px;background:var(--bg-card);border:1px solid var(--border);color:var(--text-muted)">
+                                        En attente...
+                                    </span>
+                                }
+                            </div>
+                            <div class="ep-list-url">
+                                <a href="@ep.Url" target="_blank" style="color:var(--accent);text-decoration:none">
+                                    ↗ @ep.Url
+                                </a>
+                            </div>
+                            @if (summary is not null)
+                            {
+                                <div class="ep-list-stats">
+                                    <span>⚡ @summary.LatestLatencyMs ms</span>
+                                    <span>· Moy: @summary.AverageLatencyMs ms</span>
+                                    <span>· Max: @summary.MaxLatencyMs ms</span>
+                                    <span>· ✓ @summary.SuccessRatePercent%</span>
+                                    <span>· @summary.TotalChecks checks</span>
+                                    <span style="color:var(--text-muted)">
+                                        · Vérifié: @ep.LastChecked?.LocalDateTime.ToString("HH:mm:ss")
+                                    </span>
+                                </div>
+                            }
+                        </div>
+                        <div class="ep-list-right">
+                            <div class="ep-list-config">
+                                <span style="color:var(--text-muted);font-size:11px">
+                                    🔄 Toutes les @ep.PollingIntervalSeconds s
+                                </span>
+                            </div>
+                            <div class="ep-list-actions">
+                                <button class="btn-ghost-sm" @onclick="() => TestEndpoint(ep)">⚡ Test</button>
+                                <button class="btn-ghost-sm" @onclick="() => ToggleEndpoint(ep.Id)">
+                                    @(ep.IsEnabled ? "⏸" : "▶")
+                                </button>
+                                <button class="btn-danger-sm" @onclick="() => DeleteEndpoint(ep.Id)">🗑</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- TEST RESULT TOAST -->
+            @if (_liveTestResult is not null)
+            {
+                <div class="toast @(_liveTestResult.StartsWith("✅") ? "toast-success" : "toast-error")">
+                    @_liveTestResult
+                </div>
+            }
+
+        </div>
+    </main>
+</div>
+
+@code {
+    private List<MonitoredEndpoint> _endpoints = [];
+    private List<EndpointSummary>   _summaries = [];
+    private MonitoredEndpoint _form = new();
+    private bool   _showForm;
+    private bool   _testing;
+    private string? _formError;
+    private string? _testResult;
+    private string? _liveTestResult;
+
+    private readonly List<QuickLink> _quickLinks =
+    [
+        new("SOAP/WSDL",  "Mock Calculator WSDL (Local)", "http://localhost:5100/api/products/wsdl"),
+        new("SOAP/WSDL",  "W3Schools TempConvert WSDL",    "https://www.w3schools.com/xml/tempconvert.asmx?WSDL"),
+        new("REST",       "JSONPlaceholder — Posts",        "https://jsonplaceholder.typicode.com/posts/1"),
+        new("REST",       "JSONPlaceholder — Users",        "https://jsonplaceholder.typicode.com/users"),
+        new("REST",       "HTTPBin — GET Test",             "https://httpbin.org/get"),
+        new("REST",       "HTTPBin — Delay 1s (latence)",   "https://httpbin.org/delay/1"),
+        new("REST",       "OpenWeatherMap (health check)",  "https://api.openweathermap.org/data/2.5/weather?q=Paris&appid=test"),
+        new("REST",       "GitHub API Status",              "https://api.github.com"),
+    ];
+
+    protected override void OnInitialized()
+    {
+        ResetForm();
+        Refresh();
+        Metrics.DataChanged    += OnData;
+        EndpointStore.Changed  += OnEndpointChange;
+    }
+
+    private void ResetForm()
+    {
+        _form = new()
+        {
+            PollingIntervalSeconds = AppSettings.DefaultPollingIntervalSeconds,
+            TimeoutSeconds = AppSettings.HttpTimeoutSeconds
+        };
+    }
+
+    private void Refresh()
+    {
+        _endpoints = [.. EndpointStore.GetAll()];
+        _summaries = Metrics.GetSummaries();
+    }
+
+    private async void OnData() { Refresh(); await InvokeAsync(StateHasChanged); }
+    private async void OnEndpointChange() { Refresh(); await InvokeAsync(StateHasChanged); }
+
+    private void AddEndpoint()
+    {
+        _formError = null;
+        if (string.IsNullOrWhiteSpace(_form.Name)) { _formError = "Le nom est obligatoire."; return; }
+        if (string.IsNullOrWhiteSpace(_form.Url))  { _formError = "L'URL est obligatoire.";  return; }
+        if (!Uri.TryCreate(_form.Url, UriKind.Absolute, out _))
+        {
+            _formError = "URL invalide. Exemples: http://... ou https://...";
+            return;
+        }
+
+        EndpointStore.Add(_form);
+        ResetForm();
+        _showForm = false;
+        _testResult = null;
+    }
+
+    private async Task<(bool Success, string Message)> PerformValidation(string url, EndpointType type, string? expectedContent)
+    {
+        try
+        {
+            var client = HttpFactory.CreateClient("MonitoringClient");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            
+            // Timeout individuel configuré
+            int timeoutSec = _form.TimeoutSeconds > 0 ? _form.TimeoutSeconds : AppSettings.HttpTimeoutSeconds;
+            using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec));
+            var resp = await client.GetAsync(url, cts.Token);
+            sw.Stop();
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                return (false, $"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase} ({sw.ElapsedMilliseconds} ms)");
+            }
+
+            var contentBytes = await resp.Content.ReadAsByteArrayAsync();
+            string contentStr = System.Text.Encoding.UTF8.GetString(contentBytes);
+
+            // 1. Validation SOAP WSDL
+            if (type == EndpointType.SoapWsdl || url.Contains("wsdl", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var doc = System.Xml.Linq.XDocument.Parse(contentStr);
+                    var rootName = doc.Root?.Name.LocalName;
+                    bool hasWsdlIndicator = rootName == "definitions" || 
+                                           rootName == "schema" || 
+                                           contentStr.Contains("wsdl:definitions") || 
+                                           contentStr.Contains("<wsdl:") || 
+                                           contentStr.Contains("<definitions");
+                    if (!hasWsdlIndicator)
+                    {
+                        return (false, $"XML valide, mais ne ressemble pas à un WSDL ({sw.ElapsedMilliseconds} ms)");
+                    }
+                }
+                catch (System.Xml.XmlException ex)
+                {
+                    return (false, $"Format WSDL XML invalide : {ex.Message} ({sw.ElapsedMilliseconds} ms)");
+                }
+            }
+            // 2. Validation GraphQL
+            else if (type == EndpointType.GraphQL)
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(contentStr);
+                }
+                catch (System.Text.Json.JsonException ex)
+                {
+                    return (false, $"JSON GraphQL non valide : {ex.Message} ({sw.ElapsedMilliseconds} ms)");
+                }
+            }
+
+            // 3. Validation du contenu attendu
+            if (!string.IsNullOrWhiteSpace(expectedContent))
+            {
+                if (!contentStr.Contains(expectedContent, StringComparison.OrdinalIgnoreCase))
+                {
+                    return (false, $"Contenu attendu '{expectedContent}' introuvable ({sw.ElapsedMilliseconds} ms)");
+                }
+            }
+
+            return (true, $"HTTP {(int)resp.StatusCode} — OK ({sw.ElapsedMilliseconds} ms)");
+        }
+        catch (TaskCanceledException)
+        {
+            return (false, "Timeout de la requête");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Erreur: {ex.Message}");
+        }
+    }
+
+    private async Task TestUrl()
+    {
+        if (string.IsNullOrWhiteSpace(_form.Url)) { _testResult = "⚠ Entrez une URL d'abord."; return; }
+        _testing    = true;
+        _testResult = null;
+
+        var result = await PerformValidation(_form.Url, _form.Type, _form.ExpectedContentContains);
+        _testResult = result.Success ? $"✅ {result.Message}" : $"❌ {result.Message}";
+        
+        _testing = false;
+    }
+
+    private async Task TestEndpoint(MonitoredEndpoint ep)
+    {
+        _liveTestResult = "⏳ Test en cours...";
+        StateHasChanged();
+
+        var result = await PerformValidation(ep.Url, ep.Type, ep.ExpectedContentContains);
+        _liveTestResult = result.Success ? $"✅ [{ep.Name}] {result.Message}" : $"❌ [{ep.Name}] {result.Message}";
+
+        StateHasChanged();
+        await Task.Delay(5000);
+        _liveTestResult = null;
+        StateHasChanged();
+    }
+
+    private void ToggleEndpoint(string id) => EndpointStore.SetEnabled(id, !(_endpoints.First(e => e.Id == id).IsEnabled));
+    private void DeleteEndpoint(string id) => EndpointStore.Delete(id);
+
+    private void PrefillForm(QuickLink link)
+    {
+        _form.Name = link.Name;
+        _form.Url  = link.Url;
+        _form.Type = link.TypeStr == "SOAP/WSDL" ? EndpointType.SoapWsdl : EndpointType.Rest;
+        _showForm  = true;
+    }
+
+    public void Dispose()
+    {
+        Metrics.DataChanged   -= OnData;
+        EndpointStore.Changed -= OnEndpointChange;
+    }
+
+    private record QuickLink(string TypeStr, string Name, string Url);
+}
+}

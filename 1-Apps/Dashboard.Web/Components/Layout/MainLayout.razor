@@ -1,0 +1,51 @@
+@inherits LayoutComponentBase
+@inject AuthService Auth
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@if (Auth.IsAuthenticated || IsLoginPage)
+{
+    @Body
+}
+else
+{
+    <div style="display:flex;justify-content:center;align-items:center;height:100vh;background:var(--bg-app);color:var(--text-muted);font-family:sans-serif">
+        <div style="text-align:center">
+            <h3>Redirection...</h3>
+            <p>Veuillez vous connecter pour accéder à la plateforme.</p>
+        </div>
+    </div>
+}
+
+<div id="blazor-error-ui" data-nosnippet class="blazor-error-boundary">
+    ⚠️ Une erreur s'est produite. <a href="." class="reload">Recharger</a>
+</div>
+
+@code {
+    private bool IsLoginPage => Navigation.ToBaseRelativePath(Navigation.Uri).StartsWith("login", StringComparison.OrdinalIgnoreCase);
+
+    protected override void OnInitialized()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        CheckAuth();
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        CheckAuth();
+        StateHasChanged();
+    }
+
+    private void CheckAuth()
+    {
+        if (!Auth.IsAuthenticated && !IsLoginPage)
+        {
+            Navigation.NavigateTo("/login");
+        }
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

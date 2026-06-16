@@ -1,0 +1,70 @@
+@using Dashboard.Web.Services
+@inject AlertsStore Alerts
+@inject AuthService Auth
+@inject NavigationManager Navigation
+
+<aside class="sidebar">
+    <div class="sidebar-logo">
+        <div class="logo-icon">📡</div>
+        <h2>API Observability</h2>
+        <p>Platform v1.0</p>
+    </div>
+
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Navigation</div>
+        <a class="nav-item @(ActivePage == "dashboard" ? "active" : "")" href="/">
+            <span class="icon">⬛</span> Dashboard
+        </a>
+        <a class="nav-item @(ActivePage == "logs" ? "active" : "")" href="/logs">
+            <span class="icon">📋</span> Logs
+            @if (UnackAlerts > 0)
+            { <span class="badge">@UnackAlerts</span> }
+        </a>
+        <a class="nav-item @(ActivePage == "alerts" ? "active" : "")" href="/alerts">
+            <span class="icon">🔔</span> Alertes
+        </a>
+        <a class="nav-item @(ActivePage == "endpoints" ? "active" : "")" href="/endpoints">
+            <span class="icon">🔗</span> Endpoints
+        </a>
+    </div>
+
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Outils</div>
+        <a class="nav-item" href="http://localhost:5100" target="_blank">
+            <span class="icon">🎯</span> Target API
+        </a>
+        <a class="nav-item @(ActivePage == "settings" ? "active" : "")" href="/settings">
+            <span class="icon">⚙️</span> Paramètres
+        </a>
+    </div>
+
+    <div class="sidebar-footer" style="display:flex; flex-direction:column; gap:12px;">
+        @if (Auth.IsAuthenticated)
+        {
+            <div class="user-profile" style="padding: 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;">
+                <div style="font-size: 9px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;">Session active</div>
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-primary); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="@Auth.CurrentUser?.Email">
+                    👤 @Auth.CurrentUser?.Username
+                </div>
+                <button class="btn-ghost-sm" style="margin-top: 8px; width: 100%; font-size: 11px; padding: 4px; text-align: center; border-color: rgba(235,87,87,0.3); color: #eb5757;" @onclick="Logout">
+                    Déconnexion 🚪
+                </button>
+            </div>
+        }
+        <div class="status-pill">
+            <div class="status-dot"></div>
+            <span>Monitoring actif</span>
+        </div>
+    </div>
+</aside>
+
+@code {
+    [Parameter] public string ActivePage { get; set; } = "";
+    [Parameter] public int UnackAlerts { get; set; }
+
+    private void Logout()
+    {
+        Auth.Logout();
+        Navigation.NavigateTo("/login");
+    }
+}
